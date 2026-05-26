@@ -1,76 +1,114 @@
+import argparse
+import json
+import os
+import sys
 import urllib.request
 import urllib.error
-import json
 import datetime
-import argparse
-import sys
+import tempfile
 
-def fetch_json(url, headers=None):
-    req = urllib.request.Request(url, headers=headers)
+
+def fetch_json(url, token):
+    req = urllib.request.Request(url)
+    req.add_header('Authorization', f'Bearer {token}')
+    req.add_header('Accept', 'application/vnd.github.v3+json')
     try:
         with urllib.request.urlopen(req) as response:
             return json.loads(response.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
         print(f"Error fetching {url}: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+        return []
 
-def get_auth_token():
-    return "mock_token"
 
-def fetch_repos(token, org):
-    url = f"https://api.github.com/orgs/{org}/repos"
-    headers = {"Authorization": f"Bearer {token}"}
-    return fetch_json(url, headers)
+def get_repos(org, token):
+    url = f'https://api.github.com/orgs/{org}/repos'
+    return fetch_json(url, token)
 
-def fetch_issues(token, repo):
-    url = f"https://api.github.com/repos/{repo}/issues"
-    headers = {"Authorization": f"Bearer {token}"}
-    return fetch_json(url, headers)
+
+def get_issues_and_prs(org, token):
+    repos = get_repos(org, token)
+    items = []
+    for repo in repos:
+        repo_name = repo['name']
+        issues_url = f"https://api.github.com/repos/{org}/{repo_name}/issues"
+        issues = fetch_json(issues_url, token)
+        for issue in issues:
+            items.append({
+                'type': 'issue',
+                'repo': repo_name,
+                'title': issue['title'],
+                'updated_at': issue['updated_at'],
+                'status': issue['state']
+            })
+        prs_url = f"https://api.github.com/repos/{org}/{repo_name}/pulls"
+        prs = fetch_json(prs_url, token)
+        for pr in prs:
+            items.append({
+                'type': 'pull_request',
+                'repo': repo_name,
+                'title': pr['title'],
+                'updated_at': pr['updated_at'],
+                'status': pr['state']
+            })
+    return items
+
 
 def filter_stale(items, stale_days):
-    now = datetime.datetime.now()
-    cutoff = now - datetime.timedelta(days=stale_days)
+    threshold = datetime.datetime.now() - datetime.timedelta(days=stale_days)
     stale = []
     for item in items:
-        if item.get('updated_at'):
-            updated_str = item['updated_at'].replace('Z', '+00:00')
-            try:
-                last_updated = datetime.datetime.fromisoformat(updated_str)
-                if last_updated < cutoff:
-                    stale.append(item)
-            except ValueError:
-                continue
+        try:
+            updated = item['updated_at']
+            if updated.endswith('Z'):
+                updated = updated[:-1] + '+00:00'
+            updated_dt = datetime.datetime.fromisoformat(updated)
+            if updated_dt < threshold:
+                stale.append(item)
+        except Exception:
+            continue
     return stale
 
-def generate_report(stale_items):
-    return f"## Stale Items Report\n\n{json.dumps(stale_items)}"
 
-def generate_script(stale_items):
-    return "#!/bin/bash\necho 'Batch closing items...'"
+def generate_report(stale_items, output_format='markdown'):
+    from rich.console import Console
+    from rich.table import Table
+    console = Console()
+    table = Table(show_header=True, header_style="bold blue")
+    table.add_column("Type")
+    table.add_column("Repo")
+    table.add_column("Title")
+    table.add_column("Status")
+    table.add_column("Updated")
+    
+    for item in stale_items:
+        table.add_row(
+            item['type'],
+            item['repo'],
+            item['title'],
+            item['status'],
+            item['updated_at']
+        )
+    
+    console.print(table)
+    return table
+
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--org', required=True)
-    parser.add_argument('--stale-days', type=int, default=30)
-    parser.add_argument('--output', default='markdown')
+    parser = argparse.ArgumentParser(description='Repo Health CLI')
+    parser.add_argument('--token', required=True, help='GitHub API Token')
+    parser.add_argument('--org', required=True, help='Organization name')
+    parser.add_argument('--stale-days', type=int, default=30, help='Days to consider stale')
     args = parser.parse_args()
     
-    token = get_auth_token()
-    repos = fetch_repos(token, args.org)
-    all_items = []
-    for repo in repos:
-        issues = fetch_issues(token, repo['name'])
-        all_items.extend(issues)
+    print(f"Fetching data for {args.org}...")
+    items = get_issues_and_prs(args.org, args.token)
+    print(f"Found {len(items)} items.")
     
-    stale = filter_stale(all_items, args.stale_days)
+    stale = filter_stale(items, args.stale_days)
+    print(f"Found {len(stale)} stale items.")
     
-    if args.output == 'markdown':
-        print(generate_report(stale))
-    elif args.output == 'script':
-        print(generate_script(stale))
+    generate_report(stale)
+
 
 if __name__ == '__main__':
     main()

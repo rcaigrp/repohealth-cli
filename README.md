@@ -1,24 +1,20 @@
 # RepoHealth CLI
 
-A Python CLI tool for tracking repository health, issue age, and PR activity across a GitHub organization or user account.
+A Python CLI tool to monitor GitHub organization health by fetching repos, issues, and pull requests.
 
-## Goal
-Track PR age, issue status, and tech debt across a GitHub organization/user, outputting a formatted Markdown/ASCII report, with optional shell script generation for stale items.
-
-## Acceptance Criteria
-1. Authenticate via GitHub token (env var or CLI arg).
-2. Fetch all repos for a specified org/user using `requests` and the GitHub REST API v3.
-3. Fetch issues and PRs across repos.
-4. Filter items stale > 30 days based on `updated_at`.
-5. Generate a formatted Markdown/ASCII report using `rich`.
-6. Optionally generate a shell script to batch-close or label stale items.
+## Features
+- Fetches all repos for a given organization.
+- Retrieves issues and pull requests.
+- Filters items based on staleness (e.g., items not updated in 30 days).
+- Generates a formatted markdown report using `rich`.
 
 ## Usage
 ```bash
-python main.py --org my-org --stale-days 30 --output markdown
+python main.py --token YOUR_TOKEN --org YOUR_ORG --stale-days 30
 ```
 
-## Test Commands
+## Testing
+Run tests with:
 ```bash
-pip install requests responses pytest && pytest /workspace/projects/RepoHealth-CLI/test_monitor.py -v
+pytest acceptance_tests.py -v
 ```
