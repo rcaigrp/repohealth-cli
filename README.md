@@ -20,6 +20,5 @@ python main.py --org my-org --stale-days 30 --output markdown
 
 ## Test Commands
 ```bash
-pip install requests rich responses pytest
-pytest /workspace/projects/RepoHealth-CLI/acceptance_tests.py -v
+pip install responses pytest && pytest /workspace/projects/RepoHealth-CLI/acceptance_tests.py -v
 ```

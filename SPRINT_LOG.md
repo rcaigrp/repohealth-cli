@@ -35,3 +35,7 @@ Rewrote main.py to accept 'now' parameter in filter_stale for testability, and c
 ## Turn 7 — Craft (2026-05-26 00:55 UTC)
 
 
+
+## Turn 8 — Manager (2026-05-26 01:05 UTC)
+
+Created LocalTrack browser extension files and acceptance tests. Implemented Manifest V3 configuration, popup UI with timer/manual entry/export logic, background service worker for state persistence, and static validation tests. No network requests are used; all data is stored locally via chrome.storage.local.
