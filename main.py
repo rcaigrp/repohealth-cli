@@ -1,177 +1,164 @@
 import argparse
-import json
 import os
-import sys
-from datetime import datetime, timedelta
-
 import requests
-import rich
+import json
+import datetime
 from rich.console import Console
 from rich.table import Table
 
-console = Console()
+def parse_args():
+    parser = argparse.ArgumentParser(description='RepoHealth CLI')
+    parser.add_argument('--org', required=True, help='GitHub organization or user')
+    parser.add_argument('--token', help='GitHub token (or use GITHUB_TOKEN env var)')
+    parser.add_argument('--stale-days', type=int, default=30, help='Days to consider stale')
+    parser.add_argument('--output', choices=['markdown', 'rich', 'json'], default='rich', help='Output format')
+    parser.add_argument('--script', action='store_true', help='Generate shell script for stale items')
+    parser.add_argument('--output-file', help='Output file path')
+    return parser.parse_args()
 
-class GitHubClient:
-    def __init__(self, token, org):
-        self.token = token
-        self.org = org
-        self.base_url = "https://api.github.com"
+def get_auth_token(token_arg):
+    return token_arg or os.environ.get('GITHUB_TOKEN')
 
-    def _get(self, endpoint, params=None):
-        headers = {"Authorization": f"token {self.token}"}
-        url = f"{self.base_url}/{endpoint}"
+def fetch_repos(org, token):
+    url = f'https://api.github.com/orgs/{org}/repos'
+    repos = []
+    headers = {'Authorization': f'token {token}'}
+    page = 1
+    while True:
+        params = {'page': page, 'per_page': 100}
         resp = requests.get(url, headers=headers, params=params)
-        resp.raise_for_status()
-        return resp
+        if resp.status_code != 200:
+            raise Exception(f'Failed to fetch repos: {resp.status_code}')
+        data = resp.json()
+        if not data:
+            break
+        repos.extend(data)
+        page += 1
+    return repos
 
-    def fetch_repos(self):
-        repos = []
+def fetch_issues_and_prs(repos, token):
+    items = []
+    headers = {'Authorization': f'token {token}'}
+    for repo in repos:
+        repo_name = repo['full_name']
+        url = f'https://api.github.com/repos/{repo_name}/issues'
         page = 1
-        url = f"orgs/{self.org}/repos"
         while True:
-            params = {"per_page": 100, "page": page}
-            resp = self._get(url, params)
+            params = {'state': 'open', 'per_page': 100, 'page': page}
+            resp = requests.get(url, headers=headers, params=params)
+            if resp.status_code != 200:
+                break
             data = resp.json()
             if not data:
                 break
-            repos.extend(data)
+            for item in data:
+                item['repo'] = repo_name
+                items.append(item)
             page += 1
-            if len(data) < 100:
-                break
-        return repos
-
-    def fetch_issues(self, repo):
-        issues = []
+        url = f'https://api.github.com/repos/{repo_name}/pulls'
         page = 1
-        url = f"repos/{self.org}/{repo}/issues"
         while True:
-            params = {"per_page": 100, "page": page}
-            resp = self._get(url, params)
+            params = {'state': 'open', 'per_page': 100, 'page': page}
+            resp = requests.get(url, headers=headers, params=params)
+            if resp.status_code != 200:
+                break
             data = resp.json()
             if not data:
                 break
-            issues.extend(data)
+            for item in data:
+                item['repo'] = repo_name
+                item['type'] = 'PR'
+                items.append(item)
             page += 1
-            if len(data) < 100:
-                break
-        return issues
+    return items
 
-    def fetch_prs(self, repo):
-        prs = []
-        page = 1
-        url = f"repos/{self.org}/{repo}/pulls"
-        while True:
-            params = {"per_page": 100, "page": page}
-            resp = self._get(url, params)
-            data = resp.json()
-            if not data:
-                break
-            prs.extend(data)
-            page += 1
-            if len(data) < 100:
-                break
-        return prs
-
-def filter_stale(items, stale_days=30, current_date=None):
-    if current_date is None:
-        current_date = datetime.utcnow().replace(tzinfo=None)
-    threshold = current_date - timedelta(days=stale_days)
+def filter_stale(items, stale_days):
+    now = datetime.datetime.utcnow()
     stale = []
     for item in items:
-        updated = item.get("updated_at") or item.get("closed_at") or item.get("created_at")
-        if not updated:
-            continue
-        iso = updated.replace("Z", "+00:00")
-        try:
-            date = datetime.fromisoformat(iso)
-            date = date.replace(tzinfo=None)
-            if date < threshold:
+        updated_at = item.get('updated_at')
+        if updated_at:
+            if updated_at.endswith('Z'):
+                updated_at = updated_at[:-1]
+            try:
+                last_updated = datetime.datetime.strptime(updated_at, '%Y-%m-%dT%H:%M:%S')
+            except ValueError:
+                continue
+            days_since = (now - last_updated).days
+            if days_since > stale_days:
                 stale.append(item)
-        except ValueError:
-            continue
     return stale
 
-def generate_report(stale_items, output_format="markdown"):
-    table = Table(title="Stale Issues & PRs")
-    table.add_column("Repo", style="cyan")
-    table.add_column("Title", style="green")
-    table.add_column("Type", style="yellow")
-    table.add_column("Updated At", style="red")
-    table.add_column("State", style="magenta")
-
-    for item in stale_items:
-        repo = item.get("repository_url", "").split("/")[-1]
-        title = item.get("title", "N/A")
-        is_pr = "/pulls" in item.get("repository_url", "") or item.get("pull_request")
-        item_type = "PR" if is_pr else "Issue"
-        updated = item.get("updated_at", "N/A")
-        state = item.get("state", "N/A")
-        table.add_row(repo, title, item_type, updated, state)
-
-    return table
-
-def generate_shell_script(stale_items, output_file="batch_close.sh"):
-    with open(output_file, "w") as f:
-        f.write("#!/bin/bash\n\n")
-        f.write("# Batch close stale items\n")
+def generate_report(stale_items, output_format):
+    if output_format == 'markdown':
+        md = '# Stale Issues and PRs\n\n'
+        md += '| Repo | Type | Title | Updated |\n'
+        md += '|---|---|---|---|\n'
         for item in stale_items:
-            repo = item.get("repository_url", "").split("/")[-1]
-            number = item.get("number", "")
-            if item.get("pull_request"):
-                f.write(f"# Close PR #{number} in {repo}\n")
-                f.write(f"echo 'Closing PR #{number} in {repo}'\n")
-            else:
-                f.write(f"# Close Issue #{number} in {repo}\n")
-                f.write(f"echo 'Closing Issue #{number} in {repo}'\n")
-    console.print(f"[green]Shell script generated: {output_file}[/green]")
+            title = item.get('title', '')
+            updated = item.get('updated_at', 'N/A')
+            repo = item.get('repo', '')
+            item_type = item.get('type', 'Issue')
+            md += f'| {repo} | {item_type} | {title} | {updated} |\n'
+        return md
+    elif output_format == 'json':
+        return json.dumps(stale_items, indent=2)
+    else:
+        console = Console()
+        table = Table(show_header=True, header_style='bold cyan')
+        table.add_column('Repo', style='dim')
+        table.add_column('Type')
+        table.add_column('Title')
+        table.add_column('Updated')
+        for item in stale_items:
+            table.add_row(item.get('repo', ''), item.get('type', 'Issue'), item.get('title', ''), item.get('updated_at', ''))
+        console.print(table)
+        return None
+
+def generate_script(stale_items):
+    script = '#!/bin/bash\n\n'
+    for item in stale_items:
+        repo = item.get('repo', '').replace('/', '-')
+        if 'number' in item:
+            num = item['number']
+            script += f'gh issue close {repo}#{num} -m "Closing stale item"\n'
+        elif 'id' in item:
+            script += f'gh issue close {repo}#{item["id"]} -m "Closing stale item"\n'
+    script += '\necho "Done"\n'
+    return script
 
 def main():
-    parser = argparse.ArgumentParser(description="RepoHealth CLI - Track repository health, issue age, and PR activity.")
-    parser.add_argument("--org", required=True, help="GitHub organization or user name")
-    parser.add_argument("--token", help="GitHub API token (default: GITHUB_TOKEN env var)")
-    parser.add_argument("--stale-days", type=int, default=30, help="Days since last update to consider stale (default: 30)")
-    parser.add_argument("--output", default="markdown", help="Output format: markdown, json, table")
-    parser.add_argument("--script", action="store_true", help="Generate shell script for batch operations")
-    
-    args = parser.parse_args()
-    token = args.token or os.environ.get("GITHUB_TOKEN")
+    args = parse_args()
+    token = get_auth_token(args.token)
     if not token:
-        console.print("[red]Error: No GitHub token provided. Set GITHUB_TOKEN env var or use --token.[/red]")
-        sys.exit(1)
-
-    client = GitHubClient(token, args.org)
-    console.print(f"[cyan]Fetching repos for {args.org}...[/cyan]")
-    repos = client.fetch_repos()
-    if not repos:
-        console.print("[yellow]No repos found.[/yellow]")
+        print('Error: No GitHub token provided. Use --token or set GITHUB_TOKEN.')
         return
-
-    console.print("[cyan]Fetching issues and PRs...[/cyan]")
-    all_items = []
-    for repo in repos:
-        repo_name = repo["name"]
-        issues = client.fetch_issues(repo_name)
-        prs = client.fetch_prs(repo_name)
-        for i in issues:
-            i["repo"] = repo_name
-        for p in prs:
-            p["repo"] = repo_name
-        all_items.extend(issues)
-        all_items.extend(prs)
-
-    console.print(f"[cyan]Total items fetched: {len(all_items)}[/cyan]")
-    stale = filter_stale(all_items, args.stale_days)
-    console.print(f"[yellow]Stale items (> {args.stale_days} days): {len(stale)}[/yellow]")
-
-    if args.output == "markdown":
-        console.print(generate_report(stale))
-    elif args.output == "json":
-        print(json.dumps(stale, indent=2))
+    repos = fetch_repos(args.org, token)
+    items = fetch_issues_and_prs(repos, token)
+    stale = filter_stale(items, args.stale_days)
+    if args.output_file:
+        with open(args.output_file, 'w') as f:
+            if args.output == 'markdown':
+                f.write(generate_report(stale, 'markdown'))
+            elif args.output == 'json':
+                f.write(generate_report(stale, 'json'))
+            else:
+                console = Console()
+                table = Table(show_header=True, header_style='bold cyan')
+                table.add_column('Repo')
+                table.add_column('Type')
+                table.add_column('Title')
+                table.add_column('Updated')
+                for item in stale:
+                    table.add_row(item.get('repo', ''), item.get('type', 'Issue'), item.get('title', ''), item.get('updated_at', ''))
+                console.print(table, file=f)
     else:
-        console.print(generate_report(stale))
-
+        if args.output == 'markdown' or args.output == 'json':
+            print(generate_report(stale, args.output))
+        else:
+            generate_report(stale, 'rich')
     if args.script:
-        generate_shell_script(stale)
+        print(generate_script(stale))
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

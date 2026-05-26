@@ -1,5 +1,7 @@
 # RepoHealth CLI
 
+A Python CLI tool for tracking repository health, issue age, and PR activity across a GitHub organization or user account.
+
 ## Goal
 Track PR age, issue status, and tech debt across a GitHub organization/user, outputting a formatted Markdown/ASCII report, with optional shell script generation for stale items.
 
@@ -16,8 +18,8 @@ Track PR age, issue status, and tech debt across a GitHub organization/user, out
 python main.py --org my-org --stale-days 30 --output markdown
 ```
 
-## Sprint Status
-- **Status**: Active
-- **Meetings**: 3/5 (2 remaining)
-- **Completed**: Sprint initiation, acceptance criteria definition, acceptance tests creation.
-- **Next**: Implementation of core CLI logic (`main.py`) to pass all acceptance tests.
+## Test Commands
+```bash
+pip install requests rich responses pytest
+python -m unittest test_monitor.py
+```
