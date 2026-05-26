@@ -1,115 +1,89 @@
 import argparse
 import requests
-import json
+from datetime import datetime, timedelta, timezone
 import sys
-import os
-from datetime import datetime, timedelta
-from datetime import timezone as tz
 
-def authenticate(token):
-    url = "https://api.github.com"
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        resp = requests.get(url, headers=headers)
-        return resp.status_code == 200
-    except Exception:
-        return False
-
-def fetch_repos(token, org=None, user=None):
-    url = f"https://api.github.com/orgs/{org}/repos" if org else f"https://api.github.com/users/{user}/repos"
-    headers = {"Authorization": f"Bearer {token}"}
+def fetch_repos(token, org):
+    url = f"https://api.github.com/orgs/{org}/repos"
+    headers = {"Authorization": f"token {token}"}
     repos = []
-    params = {"per_page": 100}
-    
+    page = 1
     while True:
+        params = {"page": page, "per_page": 100}
         resp = requests.get(url, headers=headers, params=params)
         if resp.status_code != 200:
-            return repos
+            break
         data = resp.json()
         if not data:
             break
         repos.extend(data)
-        if 'next' in resp.links:
-            url = resp.links['next']['url']
-        else:
-            break
+        page += 1
     return repos
 
-def fetch_items(token, repo_name, owner):
+def fetch_issues_and_prs(token, repos):
     items = []
-    # Fetch Issues
-    url = f"https://api.github.com/repos/{owner}/{repo_name}/issues"
-    headers = {"Authorization": f"Bearer {token}"}
-    params = {"state": "open", "per_page": 100}
-    
-    while True:
-        resp = requests.get(url, headers=headers, params=params)
-        if resp.status_code != 200:
-            break
-        data = resp.json()
-        if not data:
-            break
-        for item in data:
-            item['type'] = 'Issue'
-        items.extend(data)
-        if 'next' in resp.links:
-            url = resp.links['next']['url']
-        else:
-            break
-            
-    # Fetch PRs
-    url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls"
-    params = {"state": "open", "per_page": 100}
-    
-    while True:
-        resp = requests.get(url, headers=headers, params=params)
-        if resp.status_code != 200:
-            break
-        data = resp.json()
-        if not data:
-            break
-        for item in data:
-            item['type'] = 'PR'
-        items.extend(data)
-        if 'next' in resp.links:
-            url = resp.links['next']['url']
-        else:
-            break
+    for repo in repos:
+        url = f"https://api.github.com/repos/{repo['full_name']}/issues"
+        headers = {"Authorization": f"token {token}"}
+        page = 1
+        while True:
+            params = {"page": page, "per_page": 100, "state": "open"}
+            resp = requests.get(url, headers=headers, params=params)
+            if resp.status_code != 200:
+                break
+            data = resp.json()
+            if not data:
+                break
+            for item in data:
+                item['repo'] = repo['full_name']
+                items.append(item)
+            page += 1
     return items
 
 def filter_stale(items, days=30):
-    now = datetime.now(tz.utc)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     stale = []
     for item in items:
-        try:
-            updated = item['updated_at']
-            if updated.endswith('Z'):
-                updated = updated[:-1] + '+00:00'
-            dt = datetime.fromisoformat(updated)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=tz.utc)
-            delta = now - dt
-            if delta.days > days:
-                stale.append(item)
-        except (KeyError, ValueError):
-            continue
+        updated_at = datetime.fromisoformat(item['updated_at'].replace('Z', '+00:00'))
+        if updated_at < cutoff:
+            item['stale'] = True
+            stale.append(item)
     return stale
 
-def generate_report(items):
-    report = "# Stale Issues and PRs\n\n"
-    for item in items:
-        title = item.get('title', 'No Title')
-        url = item.get('html_url', '')
-        updated = item.get('updated_at', 'Unknown')
-        report += f"- [{title}]({url}) (Updated: {updated})\n"
-    return report
+def generate_report(stale_items, output_format='markdown'):
+    if output_format == 'markdown':
+        report = "# Repo Health Report\n\n"
+        report += f"Found {len(stale_items)} stale items.\n\n"
+        for item in stale_items:
+            report += f"- [{item['title']}]({item['html_url']}) ({item['repo']})\n"
+        return report
+    return ""
 
-def generate_script(items):
-    script = "#!/bin/bash\n"
-    for item in items:
-        url = item.get('html_url', '')
-        parts = url.split('/')
-        repo = parts[-4]
-        number = parts[-1]
-        script += f'echo "Closing {repo}#{number}"\n'
+def generate_script(stale_items):
+    script = "#!/bin/bash\n# Repo Health Stale Items Script\n\n"
+    for item in stale_items:
+        repo = item['repo'].replace('/', '-')
+        script += f"# Close issue {item['title']} in {repo}\n"
+        script += f"gh issue close {item['html_url'].split('/')[-1]} --repo {repo} --json title={item['title']} --json body='Closing stale issue.'\n"
     return script
+
+def main():
+    parser = argparse.ArgumentParser(description="Repo Health CLI")
+    parser.add_argument("--org", required=True, help="GitHub organization")
+    parser.add_argument("--token", required=True, help="GitHub token")
+    parser.add_argument("--stale-days", type=int, default=30, help="Days to consider stale")
+    parser.add_argument("--output", default="markdown", help="Output format")
+    parser.add_argument("--script", action="store_true", help="Generate shell script")
+    args = parser.parse_args()
+
+    repos = fetch_repos(args.token, args.org)
+    items = fetch_issues_and_prs(args.token, repos)
+    stale = filter_stale(items, args.stale_days)
+    
+    if args.script:
+        print(generate_script(stale))
+    else:
+        print(generate_report(stale, args.output))
+
+if __name__ == "__main__":
+    main()
