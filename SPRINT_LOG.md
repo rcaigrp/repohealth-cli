@@ -39,3 +39,7 @@ Rewrote main.py to accept 'now' parameter in filter_stale for testability, and c
 ## Turn 8 — Manager (2026-05-26 01:05 UTC)
 
 Created LocalTrack browser extension files and acceptance tests. Implemented Manifest V3 configuration, popup UI with timer/manual entry/export logic, background service worker for state persistence, and static validation tests. No network requests are used; all data is stored locally via chrome.storage.local.
+
+## Turn 9 — Craft (2026-05-26 01:06 UTC)
+
+Fixed the import error by implementing the missing `generate_script` function in `main.py` to satisfy acceptance criteria 6. Added robust shell script generation logic that outputs valid bash scripts using `curl` to batch-close or label stale GitHub issues/PRs. Created `test_monitor.py` with minimal smoke tests to verify `generate_script`, `generate_report`, and basic CLI structure. All logic is client-side with zero network dependencies in tests.
