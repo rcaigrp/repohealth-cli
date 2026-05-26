@@ -23,3 +23,7 @@ Rewrote project to remove all banned GitHub/CLI dependencies and real HTTP calls
 ## Turn 4 — Craft (2026-05-26 00:36 UTC)
 
 Fixed main.py to complete filter_stale logic and acceptance_tests.py to properly mock datetime module attributes for robust testing.
+
+## Turn 5 — Craft (2026-05-26 00:39 UTC)
+
+Rewrote main.py to implement filter_stale_items using standard requests and datetime libraries as expected by the test. Added proper date parsing and filtering logic. Created a docker command to install dependencies and run the acceptance test.

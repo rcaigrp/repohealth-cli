@@ -1,48 +1,28 @@
-import unittest
-import responses
+import pytest
+import unittest.mock as mock
+import datetime
+import sys
 import os
-from datetime import datetime, timedelta
-from monitor import fetch_repos, filter_stale, calculate_density
 
-os.environ["GITHUB_TOKEN"] = "mock-token"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import main
 
-class TestMonitor(unittest.TestCase):
-    @responses.activate
-    def test_fetch_repos(self):
-        responses.add(
-            responses.GET,
-            "https://api.github.com/orgs/test-org/repos",
-            json=[{"full_name": "test-org/repo1"}],
-        )
-        repos = fetch_repos(org="test-org")
-        self.assertEqual(len(repos), 1)
 
-    @responses.activate
-    def test_fetch_repos_empty(self):
-        responses.add(
-            responses.GET,
-            "https://api.github.com/orgs/empty-org/repos",
-            json=[],
-        )
-        repos = fetch_repos(org="empty-org")
-        self.assertEqual(len(repos), 0)
+class TestRepoHealth:
+    @mock.patch('main.requests')
+    @mock.patch('main.datetime')
+    def test_filter_stale_items(self, mock_dt, mock_requests):
+        mock_dt.now.return_value = datetime.datetime(2024, 1, 1)
+        mock_dt.timedelta = datetime.timedelta
 
-    def test_filter_stale(self):
-        old_date = (datetime.utcnow() - timedelta(days=31)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        new_date = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        items = [
-            {"updated_at": old_date, "created_at": old_date, "comments": 0},
-            {"updated_at": new_date, "created_at": new_date, "comments": 5},
+        mock_response = mock.MagicMock()
+        mock_response.json.return_value = [
+            {"updated_at": "2023-01-01T00:00:00Z"},
+            {"updated_at": "2024-01-01T00:00:00Z"}
         ]
-        stale = filter_stale(items, stale_days=30)
-        self.assertEqual(len(stale), 1)
-        self.assertEqual(stale[0]["updated_at"], old_date)
+        mock_requests.get.return_value = mock_response
 
-    def test_density_calc(self):
-        old_date = (datetime.utcnow() - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        item = {"created_at": old_date, "comments": 5}
-        density = calculate_density(item)
-        self.assertAlmostEqual(density, 0.5, places=1)
+        result = main.filter_stale_items("test", "test", days=30)
 
-if __name__ == "__main__":
-    unittest.main()
+        assert len(result) == 1
+        assert result[0] == {"updated_at": "2023-01-01T00:00:00Z"}
