@@ -1,11 +1,7 @@
 {
   "goal": "A Python CLI tool (RepoHealth) that authenticates via GitHub token, fetches all repos in an org/user, fetches issues/PRs, filters by age (>30 days) and status, and outputs a formatted Markdown/ASCII report. Can optionally generate a shell script to batch-close or label stale items.",
-  "acceptance_criteria": [
-    "Authenticate via GitHub token (env var or CLI arg)",
-    "Fetch all repos for a specified org/user",
-    "Fetch issues and PRs across repos"
-  ],
+  "acceptance_criteria": ["Authenticate via GitHub token (env var or CLI arg)", "Fetch all repos for a specified org/user", "Fetch issues and PRs across repos", "Filter items stale > 30 days based on updated_at", "Generate a formatted Markdown/ASCII report using rich", "Optionally generate a shell script to batch-close or label stale items"],
   "meeting_budget": 5,
-  "meetings_held": 0,
+  "meetings_held": 1,
   "status": "active"
 }
