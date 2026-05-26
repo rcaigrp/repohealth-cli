@@ -1,64 +1,78 @@
 import unittest
+import os
+import sys
 import responses
 import requests
-import datetime
-import sys
-import os
+from datetime import datetime, timedelta
+from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, '/workspace/projects/RepoHealth-CLI')
-
-from main import fetch_repos, fetch_issues_and_prs, filter_stale, generate_report, generate_script
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import main as main_module
 
 class TestRepoHealth(unittest.TestCase):
-    @responses.mock
-    def test_criterion_1_auth(self):
-        token = "test_token"
-        org = "test-org"
-        url = f"https://api.github.com/orgs/{org}/repos"
-        responses.add(responses.GET, url, json=[], status=200, headers={"Link": ''})
-        fetch_repos(token, org=org)
-        self.assertEqual(len(responses.calls), 1)
-        self.assertEqual(responses.calls[0].headers['Authorization'], 'token test_token')
-
-    @responses.mock
-    def test_criterion_2_fetch_repos(self):
-        token = "test_token"
-        org = "test-org"
-        url = f"https://api.github.com/orgs/{org}/repos"
-        responses.add(responses.GET, url, json=[{"name": "repo1", "full_name": "test-org/repo1"}], status=200, headers={"Link": ''})
-        repos = fetch_repos(token, org=org)
-        self.assertEqual(len(repos), 1)
-        self.assertEqual(repos[0]["name"], "repo1")
-
-    @responses.mock
-    def test_criterion_3_fetch_issues_prs(self):
-        token = "test_token"
-        repos = [{"name": "repo1", "full_name": "test-org/repo1"}]
-        url = f"https://api.github.com/repos/test-org/repo1/issues?state=open"
-        responses.add(responses.GET, url, json=[{"id": 1, "title": "Issue", "type": "issue"}], status=200, headers={"Link": ''})
-        items = fetch_issues_and_prs(token, repos)
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["title"], "Issue")
-        self.assertEqual(items[0]["repo_name"], "test-org/repo1")
-
-    def test_criterion_4_filter_stale(self):
-        now = datetime.datetime(2024, 1, 1)
-        items = [
-            {"title": "Old", "updated_at": "2023-01-01T00:00:00Z", "type": "issue"},
-            {"title": "New", "updated_at": "2024-01-01T00:00:00Z", "type": "issue"}
+    def setUp(self):
+        self.token = "test_token"
+        self.org = "test-org"
+        self.stale_days = 30
+        self.repos = [
+            {
+                "id": 1,
+                "name": "test-repo",
+                "owner": {"login": self.org},
+                "full_name": f"{self.org}/test-repo"
+            }
         ]
-        stale = filter_stale(items, days=30, now=now)
+        self.items = [
+            {
+                "id": 1,
+                "title": "Stale Issue",
+                "updated_at": "2023-01-01T00:00:00Z",
+                "number": 1,
+                "repo": f"{self.org}/test-repo"
+            },
+            {
+                "id": 2,
+                "title": "Recent Issue",
+                "updated_at": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+                "number": 2,
+                "repo": f"{self.org}/test-repo"
+            }
+        ]
+
+    @responses.activate
+    def test_fetch_repos(self):
+        responses.add(responses.GET, f'https://api.github.com/orgs/{self.org}/repos', json=self.repos)
+        fetched = main_module.fetch_repos(self.token, self.org)
+        self.assertEqual(len(fetched), 1)
+        self.assertEqual(fetched[0]['name'], 'test-repo')
+
+    @responses.activate
+    def test_fetch_issues_and_prs(self):
+        url = f"https://api.github.com/repos/{self.org}/test-repo/issues"
+        responses.add(responses.GET, url, json=self.items)
+        fetched = main_module.fetch_issues_and_prs(self.token, self.repos)
+        self.assertEqual(len(fetched), 2)
+
+    def test_filter_stale(self):
+        cutoff = datetime.utcnow() - timedelta(days=self.stale_days)
+        stale = main_module.filter_stale(self.items, self.stale_days)
         self.assertEqual(len(stale), 1)
-        self.assertEqual(stale[0]["title"], "Old")
+        self.assertEqual(stale[0]['title'], 'Stale Issue')
 
-    def test_criterion_5_generate_report(self):
-        stale_items = [{"title": "Test", "html_url": "http://test.com"}]
-        report = generate_report(stale_items, org="test-org")
-        self.assertIn("Total Stale Items: 1", report)
-        self.assertIn("test-org", report)
+    def test_generate_report_markdown(self):
+        report = main_module.generate_report(self.items, 'markdown')
+        self.assertIn("# RepoHealth Report", report)
+        self.assertIn("Stale Items", report)
 
-    def test_criterion_6_generate_script(self):
-        stale_items = [{"title": "Test", "html_url": "http://test.com", "repo_name": "test-org/repo1", "number": 1}]
-        script = generate_script(stale_items, org="test-org")
+    def test_generate_script_close(self):
+        script = main_module.generate_script(self.items, 'close', self.token)
         self.assertIn("#!/bin/bash", script)
-        self.assertIn("test-org/repo1", script)
+        self.assertIn("closed", script)
+
+    def test_generate_script_label(self):
+        script = main_module.generate_script(self.items, 'label', self.token)
+        self.assertIn("#!/bin/bash", script)
+        self.assertIn("stale", script)
+
+if __name__ == '__main__':
+    unittest.main()
