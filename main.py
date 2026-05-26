@@ -1,69 +1,78 @@
-import sys
+import argparse
 import requests
-from datetime import datetime, timedelta
+import datetime
+import os
+import sys
 
-def fetch_repos(token, org):
+def fetch_repos(org, token):
     url = f"https://api.github.com/orgs/{org}/repos"
-    headers = {"Authorization": f"token {token}"}
-    response = requests.get(url, headers=headers, params={"page": 1, "per_page": 100})
-    if response.status_code != 200:
-        raise Exception(f"API Error: {response.status_code}")
-    return response.json()
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = requests.get(url, headers=headers)
+    return resp.json()
 
-def fetch_issues(token, repo):
-    url = f"https://api.github.com/repos/{repo}/issues"
-    headers = {"Authorization": f"token {token}"}
-    response = requests.get(url, headers=headers, params={"state": "all", "per_page": 100})
-    if response.status_code != 200:
-        raise Exception(f"API Error: {response.status_code}")
-    return response.json()
+def fetch_issues_repos(repos, token):
+    items = []
+    for repo in repos:
+        repo_name = repo['full_name']
+        url = f"https://api.github.com/repos/{repo_name}/issues?state=open"
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(url, headers=headers)
+        for issue in resp.json():
+            issue['repo'] = repo_name
+            items.append(issue)
+        url = f"https://api.github.com/repos/{repo_name}/pulls?state=open"
+        resp = requests.get(url, headers=headers)
+        for pr in resp.json():
+            pr['repo'] = repo_name
+            pr['type'] = 'PR'
+            items.append(pr)
+    return items
 
-def fetch_prs(token, repo):
-    url = f"https://api.github.com/repos/{repo}/pulls"
-    headers = {"Authorization": f"token {token}"}
-    response = requests.get(url, headers=headers, params={"state": "all", "per_page": 100})
-    if response.status_code != 200:
-        raise Exception(f"API Error: {response.status_code}")
-    return response.json()
-
-def filter_stale(items, days):
-    cutoff = datetime.now() - timedelta(days=days)
+def filter_stale(items, stale_days):
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=stale_days)
     stale = []
     for item in items:
+        updated = item['updated_at']
         try:
-            updated = datetime.fromisoformat(item['updated_at'].replace('Z', '+00:00'))
-            if updated < cutoff:
+            updated_dt = datetime.datetime.fromisoformat(updated.replace('Z', '+00:00'))
+            if updated_dt < cutoff:
                 stale.append(item)
         except Exception:
-            continue
+            pass
     return stale
 
-def generate_report(stale_items):
-    report = "Stale Items Report\n"
+def generate_report(stale_items, output_format='markdown'):
+    report = f"RepoHealth Report\n"
+    report += f"=================\n"
+    report += f"Stale Items: {len(stale_items)}\n\n"
     for item in stale_items:
-        report += f"- {item.get('type', 'Issue')} {item.get('repo', '')}: {item.get('title', '')} (Last updated: {item.get('updated_at', '')})\n"
+        report += f"- {item['title']} ({item['repo']})\n"
     return report
 
-def generate_script(stale_items):
-    lines = ["#!/bin/bash"]
+def generate_script(stale_items, action='close'):
+    script = "#!/bin/bash\n"
+    script += f"# Batch {action} script for stale items\n\n"
     for item in stale_items:
-        lines.append(f"echo 'Closing {item.get('title', '')}'")
-    return "\n".join(lines)
+        repo = item['repo']
+        script += f"# curl -X PATCH -H 'Authorization: Bearer $GITHUB_TOKEN' https://api.github.com/repos/{repo}/issues/NUMBER -d '{{\"state\": \"{action}\"}}'\n"
+    return script
 
 def main():
-    args = sys.argv[1:]
-    token = None
-    org = None
-    days = 30
+    parser = argparse.ArgumentParser(description='Repo Health Checker')
+    parser.add_argument('--org', required=True, help='GitHub Organization')
+    parser.add_argument('--token', required=True, help='GitHub Personal Access Token')
+    parser.add_argument('--stale-days', type=int, default=30, help='Days to consider stale')
+    parser.add_argument('--output', default='report.md', help='Output file')
+    args = parser.parse_args()
+
+    repos = fetch_repos(args.org, args.token)
+    items = fetch_issues_repos(repos, args.token)
+    stale = filter_stale(items, args.stale_days)
     
-    if '--token' in args:
-        token = args[args.index('--token') + 1]
-    if '--org' in args:
-        org = args[args.index('--org') + 1]
-    if '--days' in args:
-        days = int(args[args.index('--days') + 1])
-        
-    print(f"Token: {token}, Org: {org}, Days: {days}")
+    report = generate_report(stale)
+    with open(args.output, 'w') as f:
+        f.write(report)
+    print(f"Report generated: {args.output}")
 
 if __name__ == "__main__":
     main()

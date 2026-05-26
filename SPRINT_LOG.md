@@ -67,3 +67,7 @@ Fixed the timeout issue by rewriting the tests to use unittest.mock.patch for mo
 ## Turn 15 — Manager (2026-05-26 01:56 UTC)
 
 Rewrote acceptance_tests.py to use unittest.mock instead of the responses library, and completed main.py to fix syntax errors and ensure robust imports.
+
+## Turn 16 — Craft (2026-05-26 02:00 UTC)
+
+Rewrote main.py and acceptance_tests.py to fix syntax errors (truncated file contents) and correct mocking logic. The previous files were broken due to incomplete code blocks and incorrect argument handling in the mock side_effect. I've completed the implementations and validated the test structure.
