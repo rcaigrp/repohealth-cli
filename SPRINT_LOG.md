@@ -27,3 +27,7 @@ Fixed main.py to complete filter_stale logic and acceptance_tests.py to properly
 ## Turn 5 — Craft (2026-05-26 00:39 UTC)
 
 Rewrote main.py to implement filter_stale_items using standard requests and datetime libraries as expected by the test. Added proper date parsing and filtering logic. Created a docker command to install dependencies and run the acceptance test.
+
+## Turn 6 — Craft (2026-05-26 00:48 UTC)
+
+Rewrote main.py to accept 'now' parameter in filter_stale for testability, and created acceptance_tests.py using pytest and responses library for mocking HTTP requests. This approach avoids complex datetime mocking and ensures robust testing.
