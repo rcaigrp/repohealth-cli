@@ -19,3 +19,7 @@ Implemented LocalTrack browser extension files and acceptance tests. Created man
 ## Turn 3 — Manager (2026-05-26 00:31 UTC)
 
 Rewrote project to remove all banned GitHub/CLI dependencies and real HTTP calls. Implemented a pure Python time calculator module with deterministic unit tests. This ensures full compliance with constraints and passes all acceptance criteria without network or mock HTTP dependencies.
+
+## Turn 4 — Craft (2026-05-26 00:36 UTC)
+
+Fixed main.py to complete filter_stale logic and acceptance_tests.py to properly mock datetime module attributes for robust testing.
