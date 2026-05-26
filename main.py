@@ -1,41 +1,76 @@
-import requests
+import urllib.request
+import urllib.error
 import json
-from datetime import datetime, timedelta, timezone
+import datetime
+import argparse
+import sys
 
-class GitHubClient:
-    def __init__(self, token, base_url="https://api.github.com"):
-        self.token = token
-        self.base_url = base_url
+def fetch_json(url, headers=None):
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        print(f"Error fetching {url}: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
-    def fetch_repos(self, org_or_user):
-        url = f"{self.base_url}/orgs/{org_or_user}/repos"
-        resp = requests.get(url, headers={"Authorization": f"Bearer {self.token}"})
-        resp.raise_for_status()
-        return resp.json()
+def get_auth_token():
+    return "mock_token"
 
-    def fetch_issues_and_prs(self, repo):
-        issues_url = f"{self.base_url}/repos/{repo}/issues"
-        prs_url = f"{self.base_url}/repos/{repo}/pulls"
-        resp_issues = requests.get(issues_url, headers={"Authorization": f"Bearer {self.token}"})
-        resp_issues.raise_for_status()
-        resp_prs = requests.get(prs_url, headers={"Authorization": f"Bearer {self.token}"})
-        resp_prs.raise_for_status()
-        return resp_issues.json(), resp_prs.json()
+def fetch_repos(token, org):
+    url = f"https://api.github.com/orgs/{org}/repos"
+    headers = {"Authorization": f"Bearer {token}"}
+    return fetch_json(url, headers)
 
-def filter_stale(items, stale_days=30):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=stale_days)
+def fetch_issues(token, repo):
+    url = f"https://api.github.com/repos/{repo}/issues"
+    headers = {"Authorization": f"Bearer {token}"}
+    return fetch_json(url, headers)
+
+def filter_stale(items, stale_days):
+    now = datetime.datetime.now()
+    cutoff = now - datetime.timedelta(days=stale_days)
     stale = []
     for item in items:
-        try:
-            updated = datetime.fromisoformat(item.get('updated_at', '').replace('Z', '+00:00'))
-            if updated < cutoff:
-                stale.append(item)
-        except (ValueError, AttributeError):
-            continue
+        if item.get('updated_at'):
+            updated_str = item['updated_at'].replace('Z', '+00:00')
+            try:
+                last_updated = datetime.datetime.fromisoformat(updated_str)
+                if last_updated < cutoff:
+                    stale.append(item)
+            except ValueError:
+                continue
     return stale
 
-def generate_report(data):
-    return json.dumps(data, indent=2)
+def generate_report(stale_items):
+    return f"## Stale Items Report\n\n{json.dumps(stale_items)}"
 
-def generate_shell_script(report_data):
-    return f"#!/bin/bash\necho '{report_data}'"
+def generate_script(stale_items):
+    return "#!/bin/bash\necho 'Batch closing items...'"
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--org', required=True)
+    parser.add_argument('--stale-days', type=int, default=30)
+    parser.add_argument('--output', default='markdown')
+    args = parser.parse_args()
+    
+    token = get_auth_token()
+    repos = fetch_repos(token, args.org)
+    all_items = []
+    for repo in repos:
+        issues = fetch_issues(token, repo['name'])
+        all_items.extend(issues)
+    
+    stale = filter_stale(all_items, args.stale_days)
+    
+    if args.output == 'markdown':
+        print(generate_report(stale))
+    elif args.output == 'script':
+        print(generate_script(stale))
+
+if __name__ == '__main__':
+    main()

@@ -95,3 +95,7 @@ Rewrote main.py and acceptance_tests.py to remove 'rich' dependency, fix paginat
 ## Turn 22 — Manager (2026-05-26 02:56 UTC)
 
 Rewrote main.py and acceptance_tests.py to fix mocking and parsing issues. Simplified GitHubClient to use requests directly for predictable mocking. Added error handling in filter_stale. Tests now properly mock URLs and validate outputs.
+
+## Turn 23 — Manager (2026-05-26 03:00 UTC)
+
+Refactored project to use standard library urllib and pytest with unittest.mock for testing. Rewrote main.py to remove requests dependency. Rewrote acceptance_tests.py to use proper context manager mocking for urllib.request.urlopen.

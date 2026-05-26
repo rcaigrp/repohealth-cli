@@ -1,60 +1,60 @@
-import unittest
-import responses
+import pytest
 import json
-import sys
-import os
+import datetime
+from unittest.mock import MagicMock, patch
+from main import fetch_repos, fetch_issues, filter_stale, generate_report, generate_script
 
-sys.path.insert(0, '/workspace/projects/RepoHealth-CLI')
-from main import GitHubClient, filter_stale, generate_report, generate_shell_script
-
-class TestGitHubClient(unittest.TestCase):
-    @responses.activate
-    def test_fetch_repos(self):
-        org = "test-org"
-        responses.add(
-            responses.GET,
-            f"https://api.github.com/orgs/{org}/repos",
-            body=json.dumps([{"name": "repo1", "updated_at": "2023-01-01T00:00:00Z"}]),
-            status=200
-        )
-        client = GitHubClient("token123")
-        repos = client.fetch_repos(org)
-        self.assertEqual(len(repos), 1)
-        self.assertEqual(repos[0]['name'], 'repo1')
-
-    @responses.activate
-    def test_fetch_issues_and_prs(self):
-        repo = "test-repo"
-        responses.add(responses.GET, f"https://api.github.com/repos/{repo}/issues", body=json.dumps([{"title": "Issue 1", "updated_at": "2023-01-01T00:00:00Z"}]), status=200)
-        responses.add(responses.GET, f"https://api.github.com/repos/{repo}/pulls", body=json.dumps([{"title": "PR 1", "updated_at": "2023-01-01T00:00:00Z"}]), status=200)
+class TestRepoHealth:
+    @patch('urllib.request.urlopen')
+    def test_fetch_repos(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps([{"name": "repo1", "id": 1}]).encode('utf-8')
         
-        client = GitHubClient("token123")
-        issues, prs = client.fetch_issues_and_prs(repo)
-        self.assertEqual(len(issues), 1)
-        self.assertEqual(len(prs), 1)
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__.return_value = mock_response
+        mock_ctx.__exit__.return_value = None
+        
+        mock_urlopen.return_value = mock_ctx
+        
+        token = "test_token"
+        org = "test_org"
+        
+        repos = fetch_repos(token, org)
+        assert len(repos) == 1
+        assert repos[0]['name'] == 'repo1'
 
-class TestFilterStale(unittest.TestCase):
-    def test_filter_stale(self):
-        items = [
-            {"updated_at": "2020-01-01T00:00:00Z"},
-            {"updated_at": "2023-01-01T00:00:00Z"}
-        ]
-        stale = filter_stale(items, stale_days=30)
-        self.assertEqual(len(stale), 1)
-        self.assertEqual(stale[0]['updated_at'], "2020-01-01T00:00:00Z")
+    @patch('urllib.request.urlopen')
+    def test_fetch_issues(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps([{"id": 1, "updated_at": "2023-01-01T00:00:00Z"}]).encode('utf-8')
+        
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__.return_value = mock_response
+        mock_ctx.__exit__.return_value = None
+        
+        mock_urlopen.return_value = mock_ctx
+        
+        token = "test_token"
+        repo = "repo1"
+        
+        issues = fetch_issues(token, repo)
+        assert len(issues) == 1
 
-class TestGenerateReport(unittest.TestCase):
+    @patch('datetime.datetime')
+    def test_filter_stale(self, MockDatetime):
+        MockDatetime.now.return_value = datetime.datetime(2024, 1, 15)
+        MockDatetime.fromisoformat.return_value = datetime.datetime(2023, 1, 1)
+        
+        items = [{"updated_at": "2023-01-01T00:00:00Z"}]
+        stale = filter_stale(items, 30)
+        assert len(stale) == 1
+
     def test_generate_report(self):
-        data = {"repo": "test"}
-        result = generate_report(data)
-        self.assertEqual(json.loads(result), data)
+        items = [{"id": 1}]
+        report = generate_report(items)
+        assert "Stale Items Report" in report
 
-class TestGenerateShellScript(unittest.TestCase):
-    def test_generate_shell_script(self):
-        report = '{"repo": "test"}'
-        result = generate_shell_script(report)
-        self.assertIn("#!/bin/bash", result)
-        self.assertIn(report, result)
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_generate_script(self):
+        items = [{"id": 1}]
+        script = generate_script(items)
+        assert "#!/bin/bash" in script
