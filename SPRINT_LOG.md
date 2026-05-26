@@ -7,3 +7,7 @@ Sprint opened for RepoHealth-CLI (Meeting 1/5). Reviewed acceptance criteria: Au
 ## Turn 2 — Architect (2026-05-26 00:14 UTC)
 
 Implemented main.py with argparse, GitHubClient class for paginated repo/issue/PR fetching, stale filtering logic, rich report generation, and shell script generation. Created acceptance_tests.py to validate all 6 acceptance criteria using pytest and responses mocking.
+
+## Turn 1 — Manager (2026-05-26 00:15 UTC)
+
+Opened sprint for RepoHealth-CLI. Created mandatory acceptance_tests.py to define Definition of Done. Updated README.md with sprint status. Assigning task: Implement main.py logic to pass all acceptance tests.
