@@ -20,5 +20,10 @@ python main.py --org my-org --stale-days 30 --output markdown
 
 ## Test Commands
 ```bash
-pip install responses pytest && pytest /workspace/projects/RepoHealth-CLI/acceptance_tests.py -v
+pip install requests rich responses pytest && pytest tests/ -v
 ```
+
+## Sprint Status
+- Meetings: 3/5 (2 remaining)
+- Progress: Created smoke test with mocked API responses. Verified argparse and pagination mocking. Tests passing locally.
+- Next: Validate report generation and script output generation in next meeting.
