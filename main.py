@@ -1,77 +1,91 @@
-import argparse
-import requests
 import sys
+import os
+import requests
+import argparse
 from datetime import datetime, timedelta
-from rich.console import Console
 
-console = Console()
+def get_token(args):
+    if args.token:
+        return args.token
+    return os.getenv('GH_TOKEN')
 
 def fetch_repos(token, org):
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"https://api.github.com/orgs/{org}/repos"
+    url = f'https://api.github.com/orgs/{org}/repos'
+    headers = {'Authorization': f'Bearer {token}'}
     repos = []
     page = 1
     while True:
-        params = {"per_page": 100, "page": page}
+        params = {'page': page, 'per_page': 100}
         resp = requests.get(url, headers=headers, params=params)
-        if resp.status_code != 200 or not resp.json():
+        data = resp.json()
+        if not data:
             break
-        repos.extend(resp.json())
+        repos.extend(data)
         page += 1
     return repos
 
-def fetch_issues(token, repo_name):
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"https://api.github.com/repos/{repo_name}/issues"
+def fetch_issues(token, repo):
+    url = f'https://api.github.com/repos/{repo}/issues'
+    headers = {'Authorization': f'Bearer {token}'}
     issues = []
     page = 1
     while True:
-        params = {"per_page": 100, "page": page, "state": "open"}
+        params = {'page': page, 'per_page': 100, 'state': 'open'}
         resp = requests.get(url, headers=headers, params=params)
-        if resp.status_code != 200 or not resp.json():
+        data = resp.json()
+        if not data:
             break
-        issues.extend(resp.json())
+        issues.extend(data)
         page += 1
     return issues
 
-def filter_stale(items, stale_days):
-    cutoff = datetime.now() - timedelta(days=stale_days)
+def filter_stale(items, days=30):
+    cutoff = datetime.utcnow() - timedelta(days=days)
     stale = []
     for item in items:
-        try:
-            updated = datetime.fromisoformat(item['updated_at'].replace('Z', '+00:00'))
-            if updated < cutoff:
-                stale.append(item)
-        except (KeyError, ValueError):
-            continue
+        updated = datetime.fromisoformat(item['updated_at'].replace('Z', '+00:00'))
+        if updated < cutoff:
+            stale.append(item)
     return stale
 
-def generate_report(stale_items):
-    report = "RepoHealth Stale Report\n" + "="*30 + "\n"
-    for item in stale_items:
-        report += f"- {item['title']} (ID: {item['id']})\n"
-        report += f"  Updated: {item['updated_at']}\n"
-        report += f"  State: {item['state']}\n\n"
-    return report
+def generate_report(items):
+    output = "# Stale Items Report\n\n"
+    for item in items:
+        output += f"- {item['title']} ({item['html_url']})\n"
+    return output
+
+def generate_script(items):
+    script = "#!/bin/bash\n"
+    for item in items:
+        script += f"github close {item['html_url']}\n"
+    return script
 
 def main():
     parser = argparse.ArgumentParser(description='RepoHealth CLI')
-    parser.add_argument('--org', required=True, help='GitHub Organization')
-    parser.add_argument('--stale-days', type=int, default=30, help='Days to consider stale')
-    parser.add_argument('--token', required=True, help='GitHub Token')
+    parser.add_argument('--org', required=True, help='GitHub organization')
+    parser.add_argument('--token', help='GitHub token')
+    parser.add_argument('--stale-days', type=int, default=30)
+    parser.add_argument('--output', choices=['markdown', 'script'], default='markdown')
+    
     args = parser.parse_args()
     
-    repos = fetch_repos(args.token, args.org)
-    console.print(f"Found {len(repos)} repos.")
+    token = get_token(args)
+    if not token:
+        print("Error: No token provided. Use --token or set GH_TOKEN env var.")
+        sys.exit(1)
     
-    stale_items = []
+    repos = fetch_repos(token, args.org)
+    all_items = []
     for repo in repos:
-        issues = fetch_issues(args.token, repo['name'])
-        stale = filter_stale(issues, args.stale_days)
-        stale_items.extend(stale)
-        
-    report = generate_report(stale_items)
-    console.print(report)
+        issues = fetch_issues(token, repo['name'])
+        all_items.extend(issues)
+    
+    stale_items = filter_stale(all_items, args.stale_days)
+    
+    if args.output == 'markdown':
+        print(generate_report(stale_items))
+    elif args.output == 'script':
+        print(generate_script(stale_items))
 
 if __name__ == '__main__':
     main()
