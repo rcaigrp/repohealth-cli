@@ -103,3 +103,7 @@ Refactored project to use standard library urllib and pytest with unittest.mock 
 ## Turn 24 — Craft (2026-05-26 03:05 UTC)
 
 Rewrote main.py and acceptance_tests.py to be robust and mock-friendly. Added project.json and README.md to satisfy lifecycle requirements. Fixed path issues and incomplete test logic from previous attempts.
+
+## Turn 25 — Integrator (2026-05-26 03:16 UTC)
+
+Fixed incomplete main.py and acceptance_tests.py. Ensured proper mocking with responses and patch. Added pytest installation to docker command to ensure test runner availability.
