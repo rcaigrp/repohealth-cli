@@ -1,42 +1,106 @@
-import unittest
+import pytest
 import responses
+import json
 import sys
-import os
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, MagicMock
+from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, '/workspace/projects/RepoHealth-CLI')
 import main
 
-class TestRepoHealth(unittest.TestCase):
+@pytest.fixture
+def stale_item():
+    # 31 days ago
+    date = datetime.now() - timedelta(days=31)
+    return {
+        "title": "Stale Issue",
+        "updated_at": date.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "html_url": "https://api.github.com/repos/test-org/test-repo/issues/2"
+    }
+
+@pytest.fixture
+def recent_item():
+    return {
+        "title": "Recent Issue",
+        "updated_at": datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        "html_url": "https://api.github.com/repos/test-org/test-repo/issues/3"
+    }
+
+class TestRepoHealthCLI:
+    
     @responses.activate
-    def test_criterion_1_authenticate_and_fetch_repos(self):
-        token = "ghp_test"
-        org = "test_org"
-        url = f"https://api.github.com/orgs/{org}/repos"
-        responses.add(responses.GET, url, json=[{"id": 1, "name": "repo1", "owner": {"login": "test_user"}}], status=200)
-        repos = main.get_repos(token, org=org)
-        self.assertEqual(len(repos), 1)
-        self.assertEqual(repos[0]['name'], 'repo1')
+    def test_criterion_1_auth(self):
+        """Test authentication via token."""
+        responses.add(
+            responses.GET,
+            "https://api.github.com",
+            body="{}",
+            status=200
+        )
+        assert main.authenticate("fake") == True
+        
+        responses.add(
+            responses.GET,
+            "https://api.github.com",
+            body="{}",
+            status=401
+        )
+        assert main.authenticate("fake") == False
 
     @responses.activate
-    def test_criterion_2_fetch_issues_and_prs(self):
-        token = "ghp_test"
-        repos = [{"id": 1, "name": "repo1", "owner": {"login": "test_user"}}]
-        url = "https://api.github.com/repos/test_user/repo1/issues"
-        responses.add(responses.GET, url, json=[{"number": 1, "title": "Test Issue", "updated_at": "2023-01-01T00:00:00Z", "user": {"login": "user1"}, "html_url": "http://example.com", "repository": {"name": "repo1"}}], status=200)
-        items = main.get_issues_and_prs(token, repos)
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]['title'], 'Test Issue')
+    def test_criterion_2_fetch_repos(self):
+        """Test fetching all repos for an org."""
+        responses.add(
+            responses.GET,
+            "https://api.github.com/orgs/test-org/repos",
+            body=json.dumps([{"name": "repo1", "id": 1}]),
+            status=200
+        )
+        repos = main.fetch_repos("token", "test-org")
+        assert len(repos) == 1
+        assert repos[0]["name"] == "repo1"
 
-    def test_criterion_3_filter_stale(self):
-        old_date = datetime.now(timezone.utc) - timedelta(days=60)
-        items = [{"updated_at": old_date.isoformat(), "title": "Old Issue", "user": {"login": "user1"}, "html_url": "http://example.com", "number": 1, "repository": {"name": "repo1"}}]
-        stale = main.filter_stale(items, days=30)
-        self.assertEqual(len(stale), 1)
+    @responses.activate
+    def test_criterion_3_fetch_issues_and_prs(self):
+        """Test fetching issues and PRs."""
+        # Mock issues
+        responses.add(
+            responses.GET,
+            "https://api.github.com/repos/test-org/repo1/issues",
+            body=json.dumps([{"title": "Bug", "updated_at": "2023-01-01T00:00:00Z", "state": "open"}]),
+            status=200
+        )
+        # Mock PRs
+        responses.add(
+            responses.GET,
+            "https://api.github.com/repos/test-org/repo1/pulls",
+            body=json.dumps([{"title": "Feat", "updated_at": "2023-01-01T00:00:00Z", "state": "open"}]),
+            status=200
+        )
+        items = main.fetch_items("token", "repo1", "test-org")
+        assert len(items) == 2
+        assert items[0]['type'] == 'Issue'
+        assert items[1]['type'] == 'PR'
 
-    @patch('main.rich.console.Console')
-    def test_criterion_4_generate_report(self, MockConsole):
-        items = [{"title": "Test", "user": {"login": "u"}, "html_url": "http://ex.com", "number": 1, "repository": {"name": "repo1"}}]
-        main.generate_report(items)
-        MockConsole.return_value.print.assert_called()
+    @responses.activate
+    def test_criterion_4_filter_stale(self):
+        """Test filtering items stale > 30 days."""
+        items = [recent_item(), stale_item()]
+        result = main.filter_stale(items, days=30)
+        assert len(result) == 1
+        assert result[0]['title'] == "Stale Issue"
+
+    @responses.activate
+    def test_criterion_5_generate_report(self):
+        """Test generating a formatted Markdown report."""
+        items = [{"title": "Issue 1", "html_url": "http://example.com"}]
+        report = main.generate_report(items)
+        assert "# Stale Issues and PRs" in report
+        assert "Issue 1" in report
+
+    @responses.activate
+    def test_criterion_6_generate_script(self):
+        """Test generating a shell script."""
+        items = [{"title": "Issue 1", "html_url": "https://api.github.com/repos/test-org/test-repo/issues/1"}]
+        script = main.generate_script(items)
+        assert "#!/bin/bash" in script
+        assert "test-repo#1" in script
