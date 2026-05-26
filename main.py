@@ -1,152 +1,109 @@
+import requests
 import argparse
 import json
-import requests
-import csv
-import io
 import os
+import sys
 from datetime import datetime, timedelta
+from rich.console import Console
+from rich.table import Table
 
 class GitHubClient:
-    def __init__(self, token):
+    def __init__(self, token, org=None, user=None):
         self.token = token
+        self.org = org
+        self.user = user
+        self.base_url = "https://api.github.com"
         self.session = requests.Session()
         self.session.headers.update({'Authorization': f'Bearer {token}'})
-        self.session.headers.update({'Accept': 'application/vnd.github.v3+json'})
 
-    def get_repos(self, org=None, user=None):
-        if org:
-            url = f'https://api.github.com/orgs/{org}/repos'
-        elif user:
-            url = f'https://api.github.com/users/{user}/repos'
-        else:
-            raise ValueError("Must provide org or user")
-        
+    def fetch_repos(self):
+        url = f"{self.base_url}/orgs/{self.org}/repos" if self.org else f"{self.base_url}/users/{self.user}/repos"
         repos = []
-        page = 1
-        while True:
-            params = {'per_page': 100, 'page': page}
-            try:
-                response = self.session.get(url, params=params)
-                if response.status_code != 200:
-                    raise Exception(f"Failed to fetch repos: {response.text}")
-                data = response.json()
-                if not data:
-                    break
-                repos.extend(data)
-                page += 1
-            except Exception as e:
-                raise e
+        while url:
+            response = self.session.get(url)
+            response.raise_for_status()
+            repos.extend(response.json())
+            if 'next' in response.links:
+                url = response.links['next']['url']
+            else:
+                url = None
         return repos
 
-    def get_issues(self, repo_full_name):
-        url = f'https://api.github.com/repos/{repo_full_name}/issues'
-        issues = []
-        page = 1
-        while True:
-            params = {'per_page': 100, 'page': page, 'state': 'open', 'sort': 'updated', 'direction': 'desc'}
-            try:
-                response = self.session.get(url, params=params)
-                if response.status_code != 200:
-                    raise Exception(f"Failed to fetch issues: {response.text}")
-                data = response.json()
-                if not data:
-                    break
-                issues.extend(data)
-                page += 1
-            except Exception as e:
-                raise e
-        return issues
+    def fetch_issues_and_prs(self, repo_name):
+        url = f"{self.base_url}/repos/{self.org}/{repo_name}/issues"
+        items = []
+        while url:
+            response = self.session.get(url)
+            response.raise_for_status()
+            items.extend(response.json())
+            if 'next' in response.links:
+                url = response.links['next']['url']
+            else:
+                url = None
+        return items
 
-    def get_prs(self, repo_full_name):
-        url = f'https://api.github.com/repos/{repo_full_name}/pulls'
-        prs = []
-        page = 1
-        while True:
-            params = {'per_page': 100, 'page': page, 'state': 'closed', 'sort': 'updated', 'direction': 'desc'}
-            try:
-                response = self.session.get(url, params=params)
-                if response.status_code != 200:
-                    raise Exception(f"Failed to fetch PRs: {response.text}")
-                data = response.json()
-                if not data:
-                    break
-                prs.extend(data)
-                page += 1
-            except Exception as e:
-                raise e
-        return prs
+    def filter_stale(self, items, days=30):
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        stale = []
+        for item in items:
+            updated = datetime.strptime(item['updated_at'].replace('Z', '+00:00'), '%Y-%m-%dT%H:%M:%S%z')
+            if updated < cutoff:
+                stale.append(item)
+        return stale
 
-    def filter_stale_issues(self, issues, days_threshold=30):
-        """Filter out issues older than days_threshold."""
-        cutoff = datetime.utcnow() - timedelta(days=days_threshold)
-        active = []
-        for i in issues:
-            try:
-                updated = i.get('updated_at', '').replace('Z', '+00:00').replace('z', '+00:00')
-                if updated:
-                    parsed = datetime.fromisoformat(updated)
-                    if parsed > cutoff:
-                        active.append(i)
-            except Exception:
-                continue
-        return active
+def generate_report(stale_items, repos):
+    console = Console()
+    console.print("[bold red]Stale Issues and PRs Report[/bold red]")
+    console.print(f"Total Repos: {len(repos)}")
+    console.print(f"Stale Items: {len(stale_items)}")
+    console.print("-" * 50)
 
-    def export_json(self, data, filename='report.json'):
-        with open(filename, 'w') as f:
-            json.dump(data, f, indent=2)
-        return filename
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("ID", style="dim")
+    table.add_column("Title")
+    table.add_column("Status")
+    table.add_column("Updated")
+    
+    for item in stale_items:
+        table.add_row(str(item.get('id', '')), item['title'], item['state'], item['updated_at'])
+    
+    console.print(table)
 
-    def export_csv(self, data, filename='report.csv'):
-        if not data:
-            return filename
-        
-        keys = data[0].keys() if isinstance(data[0], dict) else [k for k in data[0]]
-        with open(filename, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=keys)
-            writer.writeheader()
-            writer.writerows(data)
-        return filename
+def generate_shell_script(stale_items, output_file='close_stale.sh'):
+    with open(output_file, 'w') as f:
+        f.write("#!/bin/bash\n")
+        for item in stale_items:
+            repo = item.get('repository', {})
+            owner = repo.get('owner', {})
+            login = owner.get('login', '')
+            name = repo.get('name', '')
+            f.write(f'curl -X PATCH -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" -d \'{{"state": "closed"}}\' "https://api.github.com/repos/{login}/{name}/issues/{item["number"]}"\n')
+    print(f"Script generated: {output_file}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Repo Health CLI')
-    parser.add_argument('--token', help='GitHub API Token')
+    parser = argparse.ArgumentParser(description="RepoHealth CLI")
+    parser.add_argument('--token', required=True, help='GitHub Token')
     parser.add_argument('--org', help='Organization name')
-    parser.add_argument('--user', help='GitHub username')
-    parser.add_argument('--repo', help='Repository full name')
-    parser.add_argument('--export', help='Export filename')
+    parser.add_argument('--user', help='User name')
+    parser.add_argument('--stale-days', type=int, default=30, help='Stale days threshold')
+    parser.add_argument('--output', default='markdown', help='Output format')
+    parser.add_argument('--script', action='store_true', help='Generate shell script')
     
     args = parser.parse_args()
     
-    if not args.token:
-        print("Error: Token is required")
-        return
+    client = GitHubClient(args.token, org=args.org, user=args.user)
+    repos = client.fetch_repos()
     
-    client = GitHubClient(args.token)
+    stale_items = []
+    for repo in repos:
+        items = client.fetch_issues_and_prs(repo['name'])
+        stale = client.filter_stale(items, args.stale_days)
+        stale_items.extend(stale)
     
-    if args.org or args.user:
-        repos = client.get_repos(org=args.org, user=args.user)
-        print(f"Found {len(repos)} repositories.")
-        for repo in repos:
-            print(f"- {repo['full_name']}")
+    generate_report(stale_items, repos)
     
-    if args.repo:
-        issues = client.get_issues(args.repo)
-        prs = client.get_prs(args.repo)
-        print(f"Repo: {args.repo}")
-        print(f"Open Issues: {len(issues)}")
-        print(f"Closed PRs: {len(prs)}")
-        
-        active_issues = client.filter_stale_issues(issues)
-        print(f"Active Issues: {len(active_issues)}")
-        
-        if args.export:
-            data = {"issues": issues, "prs": prs}
-            if args.export.endswith('.json'):
-                client.export_json(data, args.export)
-            elif args.export.endswith('.csv'):
-                flat_issues = [{"title": i['title'], "updated_at": i['updated_at']} for i in issues]
-                client.export_csv(flat_issues, args.export)
-            print(f"Exported to {args.export}")
+    if args.script:
+        generate_shell_script(stale_items)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
