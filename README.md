@@ -10,16 +10,22 @@ Track PR age, issue status, and tech debt across a GitHub organization/user, out
 2. Fetch all repos for a specified org/user using `requests` and the GitHub REST API v3.
 3. Fetch issues and PRs across repos.
 4. Filter items stale > 30 days based on `updated_at`.
-5. Generate a formatted Markdown/ASCII report using `rich`.
+5. Generate a formatted Markdown/ASCII report using standard library.
 6. Optionally generate a shell script to batch-close or label stale items.
 
 ## Usage
 ```bash
-python main.py --org my-org --stale-days 30 --output markdown
+python main.py --org my-org --token YOUR_TOKEN --stale-days 30 --output markdown
 ```
 
 ## Test Commands
 ```bash
-pip install requests responses rich pytest
+pip install responses pytest
 pytest /workspace/projects/RepoHealth-CLI/acceptance_tests.py -v
 ```
+
+## Sprint Status
+- Meetings: 3/5
+- Status: Active
+- Completed: Core logic, filtering, report generation, shell script generation.
+- Next: Run acceptance tests and verify all criteria pass.

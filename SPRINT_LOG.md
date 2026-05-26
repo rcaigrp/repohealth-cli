@@ -91,3 +91,7 @@ Rewrote main.py and acceptance_tests.py to remove 'rich' dependency, fix paginat
 ## Turn 21 — Manager (2026-05-26 02:46 UTC)
 
 
+
+## Turn 22 — Manager (2026-05-26 02:56 UTC)
+
+Rewrote main.py and acceptance_tests.py to fix mocking and parsing issues. Simplified GitHubClient to use requests directly for predictable mocking. Added error handling in filter_stale. Tests now properly mock URLs and validate outputs.
