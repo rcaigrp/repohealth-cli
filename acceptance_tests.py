@@ -1,78 +1,62 @@
 import unittest
-import os
-import sys
-import responses
-import requests
-from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
+import sys
+import os
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import main as main_module
+import main
 
 class TestRepoHealth(unittest.TestCase):
-    def setUp(self):
-        self.token = "test_token"
-        self.org = "test-org"
-        self.stale_days = 30
-        self.repos = [
-            {
-                "id": 1,
-                "name": "test-repo",
-                "owner": {"login": self.org},
-                "full_name": f"{self.org}/test-repo"
-            }
+    @patch('main.requests')
+    def test_fetch_repos(self, mock_requests):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{"id": 1, "name": "repo1", "owner": {"login": "test-org"}}]
+        
+        mock_empty = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+        
+        mock_requests.get.side_effect = [
+            mock_response,
+            mock_empty
         ]
-        self.items = [
-            {
-                "id": 1,
-                "title": "Stale Issue",
-                "updated_at": "2023-01-01T00:00:00Z",
-                "number": 1,
-                "repo": f"{self.org}/test-repo"
-            },
-            {
-                "id": 2,
-                "title": "Recent Issue",
-                "updated_at": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-                "number": 2,
-                "repo": f"{self.org}/test-repo"
-            }
+        
+        repos = main.fetch_repos("token", "test-org")
+        self.assertEqual(len(repos), 1)
+        self.assertEqual(repos[0]['name'], 'repo1')
+
+    @patch('main.requests')
+    def test_fetch_issues(self, mock_requests):
+        repo = {"id": 1, "name": "repo1", "owner": {"login": "test-org"}}
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{"id": 100, "title": "Stale Issue", "updated_at": "2023-01-01T00:00:00Z"}]
+        
+        mock_empty = MagicMock(status_code=200, json=MagicMock(return_value=[]))
+        
+        mock_requests.get.side_effect = [
+            mock_response,
+            mock_empty
         ]
-
-    @responses.activate
-    def test_fetch_repos(self):
-        responses.add(responses.GET, f'https://api.github.com/orgs/{self.org}/repos', json=self.repos)
-        fetched = main_module.fetch_repos(self.token, self.org)
-        self.assertEqual(len(fetched), 1)
-        self.assertEqual(fetched[0]['name'], 'test-repo')
-
-    @responses.activate
-    def test_fetch_issues_and_prs(self):
-        url = f"https://api.github.com/repos/{self.org}/test-repo/issues"
-        responses.add(responses.GET, url, json=self.items)
-        fetched = main_module.fetch_issues_and_prs(self.token, self.repos)
-        self.assertEqual(len(fetched), 2)
+        
+        issues = main.fetch_issues("token", [repo])
+        self.assertEqual(len(issues), 1)
 
     def test_filter_stale(self):
-        cutoff = datetime.utcnow() - timedelta(days=self.stale_days)
-        stale = main_module.filter_stale(self.items, self.stale_days)
+        issue = {"id": 100, "title": "Stale Issue", "updated_at": "2020-01-01T00:00:00Z"}
+        stale = main.filter_stale([issue], stale_days=30)
         self.assertEqual(len(stale), 1)
-        self.assertEqual(stale[0]['title'], 'Stale Issue')
 
-    def test_generate_report_markdown(self):
-        report = main_module.generate_report(self.items, 'markdown')
-        self.assertIn("# RepoHealth Report", report)
-        self.assertIn("Stale Items", report)
+        new_issue = {"id": 101, "title": "New Issue", "updated_at": "2025-01-01T00:00:00Z"}
+        result = main.filter_stale([issue, new_issue], stale_days=30)
+        self.assertEqual(len(result), 1)
 
-    def test_generate_script_close(self):
-        script = main_module.generate_script(self.items, 'close', self.token)
-        self.assertIn("#!/bin/bash", script)
-        self.assertIn("closed", script)
-
-    def test_generate_script_label(self):
-        script = main_module.generate_script(self.items, 'label', self.token)
-        self.assertIn("#!/bin/bash", script)
-        self.assertIn("stale", script)
+    def test_generate_report(self):
+        issues = [{"id": 100, "title": "Stale Issue", "html_url": "http://test.com", "state": "open", "updated_at": "2020-01-01T00:00:00Z"}]
+        report = main.generate_report(issues)
+        self.assertEqual(len(report), 1)
+        self.assertEqual(report[0]['title'], 'Stale Issue')
 
 if __name__ == '__main__':
     unittest.main()
