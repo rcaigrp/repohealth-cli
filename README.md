@@ -21,5 +21,5 @@ python main.py --org my-org --stale-days 30 --output markdown
 ## Test Commands
 ```bash
 pip install requests rich responses pytest
-python -m unittest test_monitor.py
+pytest /workspace/projects/RepoHealth-CLI/acceptance_tests.py -v
 ```
